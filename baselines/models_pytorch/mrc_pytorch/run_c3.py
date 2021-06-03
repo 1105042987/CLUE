@@ -131,7 +131,7 @@ class c3Processor(DataProcessor):
                         d += [data[i][1][j]["choice"][k].lower()]
                     for k in range(len(data[i][1][j]["choice"]), 4):
                         d += ['无效答案']  # 有些C3数据选项不足4个，添加[无效答案]能够有效增强模型收敛稳定性
-                    d += [data[i][1][j].get('answer',str(i)).lower()]
+                    d += [data[i][1][j].get('answer',str(data[i][1][j].get('id',0))).lower()]
                     self.D[sid] += [d]
 
     def get_train_examples(self):
@@ -232,7 +232,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
 
-        label_id = label_map.get(example.label,int(example.label))
+        # label_id = label_map.get(example.label,int(example.label))
+        label_id = int(example.label)
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
@@ -776,7 +777,7 @@ def main():
         test_loss, test_accuracy = 0, 0
         nb_test_steps, nb_test_examples = 0, 0
         logits_all = []
-        result_all = []
+        result_all = {}
         for input_ids, input_mask, segment_ids, label_ids in tqdm(test_dataloader):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
@@ -792,7 +793,7 @@ def main():
             res_batch = logits.argmax(1)
             for i in range(len(logits)):
                 logits_all += [logits[i]]
-                result_all.append({"id":int(label_ids[i]),"label":int(res_batch[i])})
+                result_all[int(label_ids[i])]=int(res_batch[i])
 
             # tmp_test_accuracy = accuracy(logits, label_ids.reshape(-1))
 
@@ -807,11 +808,13 @@ def main():
 
         # result = {'test_loss': test_loss,
         #           'test_accuracy': test_accuracy}
-
+        STRLL = ["{\"id\":",",\"label\":","}\n"]
         output_test_file = os.path.join(args.output_dir, "c3_predict.json")
         with open(output_test_file, "w") as f:
             for i in range(len(result_all)):
-                f.write(str(result_all[i])+'\n')
+                s=STRLL[0]+str(i)+STRLL[1]+str(result_all[i])+STRLL[2]
+                f.write(s)
+
         # with open(output_test_file, "w") as writer:
         #     logger.info("***** Test results *****")
         #     for key in sorted(result.keys()):
