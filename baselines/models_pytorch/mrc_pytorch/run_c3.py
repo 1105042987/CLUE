@@ -111,10 +111,17 @@ class c3Processor(DataProcessor):
 
         for sid in range(3):
             data = []
-            for subtask in ["d", "m"]:
-                with open(self.data_dir + "/c3-" + subtask + "-" + ["train.json", "dev.json", "test.json"][sid],
-                          "r", encoding="utf8") as f:
-                    data += json.load(f)
+            if sid<2:
+                for subtask in ["d", "m"]:
+                    with open(self.data_dir + subtask + "-" + ["train.json", "dev.json", "test.json"][sid],
+                            "r", encoding="utf8") as f:
+                        data += json.load(f)
+            else:
+                with open(self.data_dir+"test.json","r", encoding="utf8") as f:
+                    data+=json.load(f)
+                # with open(self.data_dir + "/c3-" + subtask + "-" + ["train.json", "dev.json", "test.json"][sid],
+                #           "r", encoding="utf8") as f:
+                #     data += json.load(f)
             if sid == 0:
                 random.shuffle(data)
             for i in range(len(data)):
@@ -124,7 +131,7 @@ class c3Processor(DataProcessor):
                         d += [data[i][1][j]["choice"][k].lower()]
                     for k in range(len(data[i][1][j]["choice"]), 4):
                         d += ['无效答案']  # 有些C3数据选项不足4个，添加[无效答案]能够有效增强模型收敛稳定性
-                    d += [data[i][1][j]["answer"].lower()]
+                    d += [data[i][1][j].get('answer',str(i)).lower()]
                     self.D[sid] += [d]
 
     def get_train_examples(self):
@@ -151,7 +158,7 @@ class c3Processor(DataProcessor):
         else:
             examples = []
             for (i, d) in enumerate(data):
-                answer = -1
+                answer = data[i][6]
                 # 这里data[i]有6个元素，0是context，1是问题，2~5是choice，6是答案
                 for k in range(4):
                     if data[i][2 + k] == data[i][6]:
@@ -225,7 +232,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         assert len(input_mask) == max_seq_length
         assert len(segment_ids) == max_seq_length
 
-        label_id = label_map[example.label]
+        label_id = label_map.get(example.label,int(example.label))
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
@@ -436,7 +443,7 @@ def main():
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
             args.gradient_accumulation_steps))
 
-    args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
+    # args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -678,52 +685,52 @@ def main():
         logger.info("  Batch size = %d", args.eval_batch_size)
 
         model.eval()
-        eval_loss, eval_accuracy = 0, 0
-        nb_eval_steps, nb_eval_examples = 0, 0
-        logits_all = []
-        for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader):
-            input_ids = input_ids.to(device)
-            input_mask = input_mask.to(device)
-            segment_ids = segment_ids.to(device)
-            label_ids = label_ids.to(device)
+        # eval_loss, eval_accuracy = 0, 0
+        # nb_eval_steps, nb_eval_examples = 0, 0
+        # logits_all = []
+        # for input_ids, input_mask, segment_ids, label_ids in tqdm(eval_dataloader):
+        #     input_ids = input_ids.to(device)
+        #     input_mask = input_mask.to(device)
+        #     segment_ids = segment_ids.to(device)
+        #     label_ids = label_ids.to(device)
 
-            with torch.no_grad():
-                tmp_eval_loss, logits = model(input_ids, segment_ids, input_mask, label_ids, return_logits=True)
+        #     with torch.no_grad():
+        #         tmp_eval_loss, logits = model(input_ids, segment_ids, input_mask, label_ids, return_logits=True)
 
-            logits = logits.detach().cpu().numpy()
-            label_ids = label_ids.cpu().numpy()
-            for i in range(len(logits)):
-                logits_all += [logits[i]]
+        #     logits = logits.detach().cpu().numpy()
+        #     label_ids = label_ids.cpu().numpy()
+        #     for i in range(len(logits)):
+        #         logits_all += [logits[i]]
 
-            tmp_eval_accuracy = accuracy(logits, label_ids.reshape(-1))
+        #     tmp_eval_accuracy = accuracy(logits, label_ids.reshape(-1))
 
-            eval_loss += tmp_eval_loss.mean().item()
-            eval_accuracy += tmp_eval_accuracy
+        #     eval_loss += tmp_eval_loss.mean().item()
+        #     eval_accuracy += tmp_eval_accuracy
 
-            nb_eval_examples += input_ids.size(0)
-            nb_eval_steps += 1
+        #     nb_eval_examples += input_ids.size(0)
+        #     nb_eval_steps += 1
 
-        eval_loss = eval_loss / nb_eval_steps
-        eval_accuracy = eval_accuracy / nb_eval_examples
+        # eval_loss = eval_loss / nb_eval_steps
+        # eval_accuracy = eval_accuracy / nb_eval_examples
 
-        result = {'eval_loss': eval_loss,
-                  'eval_accuracy': eval_accuracy}
+        # result = {'eval_loss': eval_loss,
+        #           'eval_accuracy': eval_accuracy}
 
-        output_eval_file = os.path.join(args.output_dir, "results_dev.txt")
-        with open(output_eval_file, "w") as writer:
-            logger.info("***** Eval results *****")
-            for key in sorted(result.keys()):
-                logger.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
-        output_eval_file = os.path.join(args.output_dir, "logits_dev.txt")
-        with open(output_eval_file, "w") as f:
-            for i in range(len(logits_all)):
-                for j in range(len(logits_all[i])):
-                    f.write(str(logits_all[i][j]))
-                    if j == len(logits_all[i]) - 1:
-                        f.write("\n")
-                    else:
-                        f.write(" ")
+        # output_eval_file = os.path.join(args.output_dir, "results_dev.txt")
+        # with open(output_eval_file, "w") as writer:
+        #     logger.info("***** Eval results *****")
+        #     for key in sorted(result.keys()):
+        #         logger.info("  %s = %s", key, str(result[key]))
+        #         writer.write("%s = %s\n" % (key, str(result[key])))
+        # output_eval_file = os.path.join(args.output_dir, "logits_dev.txt")
+        # with open(output_eval_file, "w") as f:
+        #     for i in range(len(logits_all)):
+        #         for j in range(len(logits_all[i])):
+        #             f.write(str(logits_all[i][j]))
+        #             if j == len(logits_all[i]) - 1:
+        #                 f.write("\n")
+        #             else:
+        #                 f.write(" ")
 
         test_examples = processor.get_test_examples()
         feature_dir = os.path.join(args.data_dir, 'test_features{}.pkl'.format(args.max_seq_length))
@@ -769,6 +776,7 @@ def main():
         test_loss, test_accuracy = 0, 0
         nb_test_steps, nb_test_examples = 0, 0
         logits_all = []
+        result_all = []
         for input_ids, input_mask, segment_ids, label_ids in tqdm(test_dataloader):
             input_ids = input_ids.to(device)
             input_mask = input_mask.to(device)
@@ -776,33 +784,39 @@ def main():
             label_ids = label_ids.to(device)
 
             with torch.no_grad():
-                tmp_test_loss, logits = model(input_ids, segment_ids, input_mask, label_ids, return_logits=True)
+                # tmp_test_loss, logits = model(input_ids, segment_ids, input_mask, label_ids, return_logits=True)
+                logits = model(input_ids, segment_ids, input_mask, return_logits=True)
 
             logits = logits.detach().cpu().numpy()
             label_ids = label_ids.to('cpu').numpy()
+            res_batch = logits.argmax(1)
             for i in range(len(logits)):
                 logits_all += [logits[i]]
+                result_all.append({"id":int(label_ids[i]),"label":int(res_batch[i])})
 
-            tmp_test_accuracy = accuracy(logits, label_ids.reshape(-1))
+            # tmp_test_accuracy = accuracy(logits, label_ids.reshape(-1))
 
-            test_loss += tmp_test_loss.mean().item()
-            test_accuracy += tmp_test_accuracy
+            # test_loss += tmp_test_loss.mean().item()
+            # test_accuracy += tmp_test_accuracy
 
             nb_test_examples += input_ids.size(0)
             nb_test_steps += 1
 
-        test_loss = test_loss / nb_test_steps
-        test_accuracy = test_accuracy / nb_test_examples
+        # test_loss = test_loss / nb_test_steps
+        # test_accuracy = test_accuracy / nb_test_examples
 
-        result = {'test_loss': test_loss,
-                  'test_accuracy': test_accuracy}
+        # result = {'test_loss': test_loss,
+        #           'test_accuracy': test_accuracy}
 
-        output_test_file = os.path.join(args.output_dir, "results_test.txt")
-        with open(output_test_file, "w") as writer:
-            logger.info("***** Test results *****")
-            for key in sorted(result.keys()):
-                logger.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
+        output_test_file = os.path.join(args.output_dir, "c3_predict.json")
+        with open(output_test_file, "w") as f:
+            for i in range(len(result_all)):
+                f.write(str(result_all[i])+'\n')
+        # with open(output_test_file, "w") as writer:
+        #     logger.info("***** Test results *****")
+        #     for key in sorted(result.keys()):
+        #         logger.info("  %s = %s", key, str(result[key]))
+        #         writer.write("%s = %s\n" % (key, str(result[key])))
         output_test_file = os.path.join(args.output_dir, "logits_test.txt")
         with open(output_test_file, "w") as f:
             for i in range(len(logits_all)):
