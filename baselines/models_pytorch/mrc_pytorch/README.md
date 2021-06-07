@@ -2,6 +2,11 @@
 
 **详细信息见于https://github.com/chineseGLUE/chineseGLUE**
 
+## 环境搭建
+
+conda install pytorch torchvision torchaudio cudatoolkit=10.2 -c pytorch
+pip install PyCLUE boto3
+
 ## 代码目录说明
 
 ```text

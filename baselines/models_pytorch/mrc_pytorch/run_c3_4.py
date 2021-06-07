@@ -29,7 +29,7 @@ import random
 import numpy as np
 import torch
 from google_albert_pytorch_modeling import AlbertConfig, AlbertForMultipleChoice
-from pytorch_modeling import BertConfig, BertForMultipleChoice, ALBertConfig, ALBertForMultipleChoice
+from pytorch_modeling import BertConfig, BertForMultipleChoice, ALBertConfig, ALBertForMultipleChoice, BertForMultipleChoice4
 from tools import official_tokenization as tokenization
 from tools import utils
 from tools.pytorch_optimization import get_optimization, warmup_linear
@@ -152,7 +152,7 @@ class c3Processor(DataProcessor):
 
     def _create_examples(self, data, set_type):
         """Creates examples for the training and dev sets."""
-        cache_dir = os.path.join(self.data_dir, set_type + '_examples.pkl')
+        cache_dir = os.path.join(self.data_dir, set_type + '_examples_4.pkl')
         if os.path.exists(cache_dir):
             examples = pickle.load(open(cache_dir, 'rb'))
         else:
@@ -166,12 +166,11 @@ class c3Processor(DataProcessor):
 
                 label = tokenization.convert_to_unicode(answer)
 
-                for k in range(4):
-                    guid = "%s-%s-%s" % (set_type, i, k)
-                    text_a = tokenization.convert_to_unicode(data[i][0])
-                    text_b = tokenization.convert_to_unicode(data[i][k + 2])
-                    text_c = tokenization.convert_to_unicode(data[i][1])
-                    examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label, text_c=text_c))
+                guid = "%s-%s-%s" % (set_type, i, k)
+                text_a = tokenization.convert_to_unicode(data[i][0])
+                text_b = [tokenization.convert_to_unicode(data[i][k + 2]) for k in range(n_class)]
+                text_c = tokenization.convert_to_unicode(data[i][1])
+                examples.append(InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label, text_c=text_c))
 
             with open(cache_dir, 'wb') as w:
                 pickle.dump(examples, w)
@@ -188,16 +187,17 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
     for (i, label) in enumerate(label_list):
         label_map[label] = i
 
-    features = [[]]
+    features = []
     for (ex_index, example) in enumerate(tqdm(examples)):
         tokens_a = tokenizer.tokenize(example.text_a)
 
-        tokens_b = tokenizer.tokenize(example.text_b)
+        tokens_b = [tokenizer.tokenize(example.text_b[k]) for k in range(n_class)]
 
         tokens_c = tokenizer.tokenize(example.text_c)
 
-        _truncate_seq_tuple(tokens_a, tokens_b, tokens_c, max_seq_length - 4)
-        tokens_b = tokens_c + ["[SEP]"] + tokens_b
+        _truncate_seq_tuple(tokens_a, tokens_b, tokens_c, max_seq_length - 7)
+        for i in tokens_b:
+            tokens_c+=["[SEP]"]+i
 
         tokens = []
         segment_ids = []
@@ -209,8 +209,8 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
         tokens.append("[SEP]")
         segment_ids.append(0)
 
-        if tokens_b:
-            for token in tokens_b:
+        if tokens_c:
+            for token in tokens_c:
                 tokens.append(token)
                 segment_ids.append(1)
             tokens.append("[SEP]")
@@ -245,17 +245,13 @@ def convert_examples_to_features(examples, label_list, max_seq_length, tokenizer
                 "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: %s (id = %d)" % (example.label, label_id))
 
-        features[-1].append(
+        features.append(
             InputFeatures(
                 input_ids=input_ids,
                 input_mask=input_mask,
                 segment_ids=segment_ids,
                 label_id=label_id))
-        if len(features[-1]) == n_class:
-            features.append([])
 
-    if len(features[-1]) == 0:
-        features = features[:-1]
     print('#features', len(features))
     return features
 
@@ -285,15 +281,17 @@ def _truncate_seq_tuple(tokens_a, tokens_b, tokens_c, max_length):
     # of tokens from each, since if one sequence is very short then each token
     # that's truncated likely contains more information than a longer sequence.
     while True:
-        total_length = len(tokens_a) + len(tokens_b) + len(tokens_c)
+        sub_l = np.array([len(tokens_a),len(tokens_c)]+[len(i) for i in tokens_b])
+        total_length = int(sub_l.sum())
         if total_length <= max_length:
             break
-        if len(tokens_a) >= len(tokens_b) and len(tokens_a) >= len(tokens_c):
+        pos = sub_l.argmax()
+        if pos==0:
             tokens_a.pop()
-        elif len(tokens_b) >= len(tokens_a) and len(tokens_b) >= len(tokens_c):
-            tokens_b.pop()
-        else:
+        elif pos==1:
             tokens_c.pop()
+        else:
+            tokens_b[pos-2].pop()
 
 
 def accuracy(out, labels):
@@ -476,7 +474,7 @@ def main():
             model = ALBertForMultipleChoice(bert_config, num_choices=n_class)
     else:
         bert_config = BertConfig.from_json_file(args.bert_config_file)
-        model = BertForMultipleChoice(bert_config, num_choices=n_class)
+        model = BertForMultipleChoice4(bert_config, num_choices=n_class)
 
     if args.max_seq_length > bert_config.max_position_embeddings:
         raise ValueError(
@@ -510,7 +508,7 @@ def main():
     eval_dataloader = None
     if args.do_eval:
         eval_examples = processor.get_dev_examples()
-        feature_dir = os.path.join(args.data_dir, 'dev_features{}.pkl'.format(args.max_seq_length))
+        feature_dir = os.path.join(args.data_dir, 'dev_features{}_4.pkl'.format(args.max_seq_length))
         if os.path.exists(feature_dir):
             eval_features = pickle.load(open(feature_dir, 'rb'))
         else:
@@ -524,14 +522,10 @@ def main():
         label_id = []
 
         for f in eval_features:
-            input_ids.append([])
-            input_mask.append([])
-            segment_ids.append([])
-            for i in range(n_class):
-                input_ids[-1].append(f[i].input_ids)
-                input_mask[-1].append(f[i].input_mask)
-                segment_ids[-1].append(f[i].segment_ids)
-            label_id.append(f[0].label_id)
+            input_ids.append(f.input_ids)
+            input_mask.append(f.input_mask)
+            segment_ids.append(f.segment_ids)
+            label_id.append(f.label_id)
 
         all_input_ids = torch.tensor(input_ids, dtype=torch.long)
         all_input_mask = torch.tensor(input_mask, dtype=torch.long)
@@ -548,7 +542,7 @@ def main():
     if args.do_train:
         best_accuracy = 0
 
-        feature_dir = os.path.join(args.data_dir, 'train_features{}.pkl'.format(args.max_seq_length))
+        feature_dir = os.path.join(args.data_dir, 'train_features{}_4.pkl'.format(args.max_seq_length))
         if os.path.exists(feature_dir):
             train_features = pickle.load(open(feature_dir, 'rb'))
         else:
@@ -566,14 +560,10 @@ def main():
         segment_ids = []
         label_id = []
         for f in train_features:
-            input_ids.append([])
-            input_mask.append([])
-            segment_ids.append([])
-            for i in range(n_class):
-                input_ids[-1].append(f[i].input_ids)
-                input_mask[-1].append(f[i].input_mask)
-                segment_ids[-1].append(f[i].segment_ids)
-            label_id.append(f[0].label_id)
+            input_ids.append(f.input_ids)
+            input_mask.append(f.input_mask)
+            segment_ids.append(f.segment_ids)
+            label_id.append(f.label_id)
 
         all_input_ids = torch.tensor(input_ids, dtype=torch.long)
         all_input_mask = torch.tensor(input_mask, dtype=torch.long)
@@ -735,7 +725,7 @@ def main():
         #                 f.write(" ")
 
         test_examples = processor.get_test_examples()
-        feature_dir = os.path.join(args.data_dir, 'test_features{}.pkl'.format(args.max_seq_length))
+        feature_dir = os.path.join(args.data_dir, 'test_features{}_4.pkl'.format(args.max_seq_length))
         if os.path.exists(feature_dir):
             test_features = pickle.load(open(feature_dir, 'rb'))
         else:
@@ -753,14 +743,10 @@ def main():
         label_id = []
 
         for f in test_features:
-            input_ids.append([])
-            input_mask.append([])
-            segment_ids.append([])
-            for i in range(n_class):
-                input_ids[-1].append(f[i].input_ids)
-                input_mask[-1].append(f[i].input_mask)
-                segment_ids[-1].append(f[i].segment_ids)
-            label_id.append(f[0].label_id)
+            input_ids.append(f.input_ids)
+            input_mask.append(f.input_mask)
+            segment_ids.append(f.segment_ids)
+            label_id.append(f.label_id)
 
         all_input_ids = torch.tensor(input_ids, dtype=torch.long)
         all_input_mask = torch.tensor(input_mask, dtype=torch.long)

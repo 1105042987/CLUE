@@ -1004,6 +1004,35 @@ class BertForMultipleChoice(PreTrainedBertModel):
         else:
             return reshaped_logits
 
+class BertForMultipleChoice4(PreTrainedBertModel):
+
+    def __init__(self, config, num_choices=2):
+        super(BertForMultipleChoice4, self).__init__(config)
+        self.num_choices = num_choices
+        self.bert = BertModel(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.classifier = nn.Linear(config.hidden_size, 4)
+        self.apply(self.init_bert_weights)
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels=None, return_logits=False):
+        flat_input_ids = input_ids.view(-1, input_ids.size(-1))
+        flat_token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1))
+        flat_attention_mask = attention_mask.view(-1, attention_mask.size(-1))
+        _, pooled_output = self.bert(flat_input_ids, flat_token_type_ids, flat_attention_mask,
+                                     output_all_encoded_layers=False)
+        pooled_output = self.dropout(pooled_output)
+        reshaped_logits = self.classifier(pooled_output)
+
+        if labels is not None:
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(reshaped_logits, labels)
+            if return_logits:
+                return loss, reshaped_logits
+            else:
+                return loss
+        else:
+            return reshaped_logits
+
 
 class BertForTokenClassification(PreTrainedBertModel):
     def __init__(self, config, num_labels=2):
